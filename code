@@ -1,0 +1,244 @@
+!pip install pdfplumber
+!pip install python-docx
+
+import os
+import re
+import nltk
+import pdfplumber
+import torch
+from google.colab import files
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from docx import Document as DocxDocument
+
+# Install necessary dependencies
+!pip install transformers accelerate bitsandbytes pdfplumber python-docx nltk langchain
+
+# Download NLTK data
+nltk.download('punkt')
+
+# Upload the file in Colab
+uploaded = files.upload()
+uploaded_filename = list(uploaded.keys())[0]  # Get the uploaded file name
+
+# Function to extract text from PDF
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+    return text.strip()
+
+# Function to extract text from Word document
+def extract_text_from_docx(docx_path):
+    doc = DocxDocument(docx_path)
+    text = "\n".join([para.text for para in doc.paragraphs])
+    return text.strip()
+
+# Function to clean the text
+def clean_text(text):
+    text = re.sub(r'\n+', '\n', text)  # Normalize new lines
+    text = re.sub(r'\s+', ' ', text)  # Remove excessive spaces
+    text = re.sub(r'[^\w\s,.!?-]', '', text)  # Allow essential punctuation
+    return text.strip()
+
+# Function to extract key legal terms
+def extract_key_legal_terms(text):
+    pattern = r'(Article \d+|The [A-Za-z() ]+ Act, \d{4}|[A-Za-z ]+ Tribunal|[A-Za-z ]+ Board|[A-Za-z ]+ Agreement|[A-Za-z ]+ Protocol|Environmental Impact Assessment|National Biodiversity Authority|Coastal Regulation Zone|Hazardous Waste Management Rules|Forest Rights Act, \d{4})'
+    matches = re.findall(pattern, text)
+    return list(set(matches))  # Remove duplicates
+
+# Determine the file type and extract text
+if uploaded_filename.endswith('.pdf'):
+    extracted_text = extract_text_from_pdf(uploaded_filename)
+elif uploaded_filename.endswith('.docx'):
+    extracted_text = extract_text_from_docx(uploaded_filename)
+else:
+    with open(uploaded_filename, 'r', encoding='utf-8') as f:
+        extracted_text = f.read()
+
+cleaned_text = clean_text(extracted_text)
+
+# Extract key legal terms
+key_legal_terms = extract_key_legal_terms(cleaned_text)
+
+# Load a more advanced summarization model (BART-large-CNN)
+model_name = "facebook/bart-large-cnn"  # Better for summarization tasks
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+# Check if GPU is available and set the device accordingly
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Load the model without `device_map="auto"` and move it to the appropriate device
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name, torch_dtype=torch.float16 if device == "cuda" else torch.float32)
+model.to(device)  # Move the model to the selected device
+
+summarizer = pipeline("summarization", model=model, tokenizer=tokenizer, device=0 if device == "cuda" else -1)
+
+# Split text into chunks for summarization
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+chunks = text_splitter.split_text(cleaned_text)
+
+# Summarize each chunk with improved parameters
+chunk_summaries = []
+for chunk in chunks:
+    summary = summarizer(chunk, max_length=300, min_length=100, do_sample=True)  # Allow for longer, more detailed summaries
+    chunk_summaries.append(summary[0]['summary_text'])
+
+# Combine chunk summaries into a final summary
+final_summary = " ".join(chunk_summaries)
+
+# Append the extracted legal terms to the summary
+final_summary += "\n\n**Key Legal Acts, Laws, and Articles Mentioned:**\n" + "\n".join(key_legal_terms)
+
+# Save the summary to a text file
+summary_filename = "summary_with_laws.txt"
+with open(summary_filename, "w", encoding="utf-8") as f:
+    f.write(final_summary)
+
+# Download the file
+files.download(summary_filename)
+
+print("Summary with key legal acts and articles has been downloaded.")from rouge_score import rouge_scorer
+from nltk.translate.bleu_score import sentence_bleu
+
+# Function to calculate ROUGE scores
+def calculate_rouge_scores(reference, generated):
+    scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+    scores = scorer.score(reference, generated)
+    return scores
+
+# Function to calculate BLEU score
+def calculate_bleu_score(reference, generated):
+    reference_tokens = [reference.split()]
+    generated_tokens = generated.split()
+    return sentence_bleu(reference_tokens, generated_tokens)
+
+# Example reference summary (replace with actual reference summaries)
+reference_summary = """
+This is a reference summary for the legal document. It contains key points and legal terms.
+"""
+
+# Calculate ROUGE scores
+rouge_scores = calculate_rouge_scores(reference_summary, final_summary)
+print("ROUGE Scores:")
+print(f"ROUGE-1: {rouge_scores['rouge1']}")
+print(f"ROUGE-2: {rouge_scores['rouge2']}")
+print(f"ROUGE-L: {rouge_scores['rougeL']}")
+
+# Calculate BLEU score
+bleu_score = calculate_bleu_score(reference_summary, final_summary)
+print(f"BLEU Score: {bleu_score}")!pip install pymupdf transformers keybert textblob torch
+!python -m textblob.download_corpora
+!pip install pymupdf
+!pip install pymupdf transformers keybert textblob# Install required libraries if not already installed
+!pip install transformers keybert textblob pymupdf
+
+import fitz  # PyMuPDF for PDF extraction
+from transformers import pipeline
+from keybert import KeyBERT
+from textblob import TextBlob
+
+# -------------------------------
+# Function: Extract Text from PDF
+# -------------------------------
+def extract_text_from_pdf(pdf_path):
+    """
+    Extracts text from a given PDF file while removing empty pages.
+    """
+    doc = fitz.open(pdf_path)
+    text = "\n".join([page.get_text("text") for page in doc if page.get_text("text").strip()])
+    return text.strip()
+
+# -------------------------------
+# Load Summarization Pipeline
+# -------------------------------
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+
+# -------------------------------
+# Function: Summarize Text
+# -------------------------------
+def summarize_text(text, chunk_size=500):
+    """
+    Summarizes the input text in smaller chunks.
+    Skips summarization for very short chunks (<50 words).
+    """
+    summaries = []
+    for i in range(0, len(text), chunk_size):
+        chunk = text[i:i + chunk_size]
+        
+        if len(chunk.split()) < 50:
+            summaries.append(chunk)  # Skip summarization if too short
+            continue
+
+        try:
+            summary = summarizer(chunk, max_length=150, min_length=50, do_sample=False)
+            summaries.append(summary[0]['summary_text'])
+        except Exception:
+            summaries.append(chunk)  # Fallback in case of an error
+    
+    return " ".join(summaries)
+
+# -------------------------------
+# Load Question-Answering Pipeline
+# -------------------------------
+qa_pipeline = pipeline("question-answering", model="bert-large-uncased-whole-word-masking-finetuned-squad")
+
+# -------------------------------
+# Function: Answer Question
+# -------------------------------
+def answer_question(question, text, chunk_size=500):
+    """
+    Splits text into overlapping chunks and finds the best answers from all chunks.
+    Returns multiple relevant answers.
+    """
+    sentences = text.split(". ")
+    chunks = []
+    current_chunk = ""
+
+    for sentence in sentences:
+        if len(current_chunk.split()) + len(sentence.split()) <= chunk_size:
+            current_chunk += sentence + ". "
+        else:
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence + ". "
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    # Find best answers from all chunks
+    answers = []
+    for chunk in chunks:
+        try:
+            response = qa_pipeline({"question": question, "context": chunk})
+            answers.append(response['answer'])
+        except Exception:
+            continue  # Skip problematic chunks
+
+    return answers  # Return all found answers
+
+# -------------------------------
+# Main Execution
+# -------------------------------
+if __name__ == "__main__":
+    # ✅ Get PDF path from user
+    pdf_path = input("Enter the path of the PDF file: ").strip()
+    
+    # Extract text from the PDF
+    text = extract_text_from_pdf(pdf_path)
+    
+    # ✅ Get question from user
+    question = input("Enter your question: ").strip()
+    
+    # ✅ Get answers
+    answers = answer_question(question, text)
+    
+    # ✅ Print answers
+    print("\n===== Answer(s) to Your Question =====\n")
+    if answers:
+        for idx, ans in enumerate(answers, 1):
+            print(f"{idx}. {ans}")
+    else:
+        print("No relevant answer found.")  give code in git
